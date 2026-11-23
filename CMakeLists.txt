@@ -11,8 +11,7 @@ option(BUILD_TESTS "Build the unit tests"             ON)
 # ---------------------------------------------------------------------------
 # Core allocator library (no Raylib dependency)
 # ---------------------------------------------------------------------------
-add_library(memcore STATIC src/memory_manager.c
-        tests/test_memory.c)
+add_library(memcore STATIC src/memory_manager.c)
 target_include_directories(memcore PUBLIC src)
 
 if(MSVC)
@@ -41,13 +40,22 @@ if(BUILD_GUI)
         FetchContent_MakeAvailable(raylib)
     endif()
 
-    add_executable(Memory_Management_System__Free_List_ src/main.c)
-    target_link_libraries(Memory_Management_System__Free_List_ PRIVATE memcore raylib)
+    # Change the executable name here only (must match your IDE run configuration)
+    set(APP_NAME Memory_Management_System__Free_List_)
+
+    add_executable(${APP_NAME} src/main.c)
+    target_link_libraries(${APP_NAME} PRIVATE memcore raylib)
+
+    # Fonts: found next to the executable, in the working directory, or here
+    target_compile_definitions(${APP_NAME} PRIVATE ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    add_custom_command(TARGET ${APP_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:${APP_NAME}>/assets")
 
     if(MSVC)
-        target_compile_options(Memory_Management_System__Free_List_ PRIVATE /W4)
+        target_compile_options(${APP_NAME} PRIVATE /W4)
     else()
-        target_compile_options(Memory_Management_System__Free_List_ PRIVATE -Wall -Wextra)
+        target_compile_options(${APP_NAME} PRIVATE -Wall -Wextra)
     endif()
 endif()
 

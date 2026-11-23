@@ -49,6 +49,116 @@ static Color block_color(int id)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Fonts: TrueType (Lato) loaded at the exact pixel size needed, so text    */
+/* stays sharp. Falls back to Raylib's built-in font if the files are       */
+/* missing, so the program still runs.                                      */
+/* ------------------------------------------------------------------------ */
+
+#define FONT_STYLES     2
+#define FONT_CACHE_MAX  24
+#define FONT_SIZE_BOOST 2      /* Lato looks smaller than its nominal size; +2 reads well on a projector */
+
+typedef enum { FONT_REGULAR = 0, FONT_BOLD = 1 } FontStyle;
+
+typedef struct {
+    int size;
+    Font font;
+} CachedFont;
+
+static const char *FONT_FILES[FONT_STYLES] = { "Lato-Regular.ttf", "Lato-Bold.ttf" };
+static char g_font_path[FONT_STYLES][512];
+static CachedFont g_font_cache[FONT_STYLES][FONT_CACHE_MAX];
+static int g_font_count[FONT_STYLES];
+
+static void fonts_init(void)
+{
+    for (int s = 0; s < FONT_STYLES; s++) {
+        const char *candidates[3];
+        candidates[0] = TextFormat("assets/fonts/%s", FONT_FILES[s]);
+        candidates[1] = TextFormat("%sassets/fonts/%s", GetApplicationDirectory(), FONT_FILES[s]);
+#ifdef ASSETS_DIR
+        candidates[2] = TextFormat("%s/fonts/%s", ASSETS_DIR, FONT_FILES[s]);
+#else
+        candidates[2] = candidates[0];
+#endif
+        g_font_path[s][0] = '\0';
+        for (int i = 0; i < 3; i++) {
+            if (FileExists(candidates[i])) {
+                snprintf(g_font_path[s], sizeof g_font_path[s], "%s", candidates[i]);
+                break;
+            }
+        }
+        if (g_font_path[s][0] == '\0') {
+            TraceLog(LOG_WARNING, "Font %s not found: using the built-in font", FONT_FILES[s]);
+        }
+    }
+}
+
+static void fonts_shutdown(void)
+{
+    for (int s = 0; s < FONT_STYLES; s++) {
+        for (int i = 0; i < g_font_count[s]; i++) UnloadFont(g_font_cache[s][i].font);
+        g_font_count[s] = 0;
+    }
+}
+
+/* Returns the font for a nominal size (loading it the first time it is needed). */
+static Font get_font(int size, FontStyle style, int *effective_size)
+{
+    int eff = size + FONT_SIZE_BOOST;
+    *effective_size = eff;
+
+    for (int i = 0; i < g_font_count[style]; i++) {
+        if (g_font_cache[style][i].size == eff) return g_font_cache[style][i].font;
+    }
+    if (g_font_path[style][0] == '\0' || g_font_count[style] >= FONT_CACHE_MAX) {
+        *effective_size = size;
+        return GetFontDefault();
+    }
+
+    Font f = LoadFontEx(g_font_path[style], eff, NULL, 0);   /* NULL = basic ASCII set */
+    if (f.texture.id == 0) {
+        *effective_size = size;
+        return GetFontDefault();
+    }
+    SetTextureFilter(f.texture, TEXTURE_FILTER_BILINEAR);
+    g_font_cache[style][g_font_count[style]].size = eff;
+    g_font_cache[style][g_font_count[style]].font = f;
+    g_font_count[style]++;
+    return f;
+}
+
+static float font_spacing(Font f, int eff_size)
+{
+    /* the built-in bitmap font needs extra spacing; TrueType fonts do not */
+    return f.texture.id == GetFontDefault().texture.id ? (float)eff_size / 10.0f : 0.0f;
+}
+
+static void ui_text_style(const char *text, int x, int y, int size, Color c, FontStyle style)
+{
+    int eff;
+    Font f = get_font(size, style, &eff);
+    DrawTextEx(f, text, (Vector2){ (float)x, (float)y }, (float)eff, font_spacing(f, eff), c);
+}
+
+static void ui_text(const char *text, int x, int y, int size, Color c)
+{
+    ui_text_style(text, x, y, size, c, FONT_REGULAR);
+}
+
+static void ui_text_bold(const char *text, int x, int y, int size, Color c)
+{
+    ui_text_style(text, x, y, size, c, FONT_BOLD);
+}
+
+static int ui_measure(const char *text, int size)
+{
+    int eff;
+    Font f = get_font(size, FONT_REGULAR, &eff);
+    return (int)(MeasureTextEx(f, text, (float)eff, font_spacing(f, eff)).x + 0.5f);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Application state                                                        */
 /* ------------------------------------------------------------------------ */
 
@@ -135,7 +245,7 @@ static void log_add(Color c, const char *fmt, ...)
         if (line[0]) snprintf(candidate, sizeof candidate, "%s %s", line, word);
         else snprintf(candidate, sizeof candidate, "%s", word);
 
-        if (line[0] && MeasureText(candidate, LOG_FONT) > LOG_TEXT_W) {
+        if (line[0] && ui_measure(candidate, LOG_FONT) > LOG_TEXT_W) {
             log_push_line(line, c);
             snprintf(line, sizeof line, "%s", word);
         } else {
@@ -157,14 +267,14 @@ static bool button(Rectangle r, const char *label, bool selected)
     Color fg = selected ? WHITE : COL_TEXT;
     DrawRectangleRec(r, bg);
     DrawRectangleLinesEx(r, 1, selected ? COL_ACCENT : COL_BORDER);
-    DrawText(label, (int)r.x + 12, (int)(r.y + (r.height - 18) / 2), 18, fg);
+    ui_text(label, (int)r.x + 12, (int)(r.y + (r.height - 18) / 2), 18, fg);
     return hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
 static void draw_text_centered(const char *text, Rectangle r, int size, Color c)
 {
-    int w = MeasureText(text, size);
-    DrawText(text, (int)(r.x + (r.width - w) / 2), (int)(r.y + (r.height - size) / 2), size, c);
+    int w = ui_measure(text, size);
+    ui_text(text, (int)(r.x + (r.width - w) / 2), (int)(r.y + (r.height - size) / 2), size, c);
 }
 
 static void draw_chevron(Vector2 tip, int dir_x, int dir_y, Color c)
@@ -383,8 +493,8 @@ static void draw_left_panel(App *app)
     DrawRectangle(10, 10, 290, SCREEN_H - 20, COL_PANEL);
     DrawRectangleLinesEx((Rectangle){ 10, 10, 290, SCREEN_H - 20 }, 1, COL_BORDER);
 
-    DrawText("Memory Manager", 24, 22, 24, COL_TEXT);
-    DrawText("Menu  (F1 - F6 also work)", 24, 54, 14, COL_MUTED);
+    ui_text_bold("Memory Manager", 24, 22, 24, COL_TEXT);
+    ui_text("Menu  (F1 - F6 also work)", 24, 54, 14, COL_MUTED);
 
     for (int i = 0; i < MODE_COUNT; i++) {
         Rectangle r = { 24, 78.0f + (float)i * 48, 262, 40 };
@@ -399,15 +509,15 @@ static void draw_left_panel(App *app)
         case MODE_WORST_FIT:
         case MODE_DEALLOC: {
             bool is_free = (app->mode == MODE_DEALLOC);
-            DrawText(is_free ? "Address of block to free" : "Size to allocate (units)",
+            ui_text(is_free ? "Address of block to free" : "Size to allocate (units)",
                      24, (int)y0, 16, COL_TEXT);
 
             Rectangle box = { 24, y0 + 26, 262, 40 };
             DrawRectangleRec(box, WHITE);
             DrawRectangleLinesEx(box, 2, COL_ACCENT);
-            DrawText(app->input, 34, (int)box.y + 9, 22, COL_TEXT);
+            ui_text(app->input, 34, (int)box.y + 9, 22, COL_TEXT);
             if (((int)(GetTime() * 2)) % 2 == 0) {
-                DrawText("|", 36 + MeasureText(app->input, 22), (int)box.y + 9, 22, COL_ACCENT);
+                ui_text("|", 36 + ui_measure(app->input, 22), (int)box.y + 9, 22, COL_ACCENT);
             }
 
             const char *label = is_free ? "Deallocate"
@@ -415,13 +525,13 @@ static void draw_left_panel(App *app)
                                                              : "Allocate (First-Fit)");
             if (button((Rectangle){ 24, y0 + 78, 262, 40 }, label, false)) run_input_action(app);
 
-            DrawText(is_free ? "Tip: click a row in the\nAllocated Blocks table to\nfill in its address."
+            ui_text(is_free ? "Tip: click a row in the\nAllocated Blocks table to\nfill in its address."
                              : "Type a size and press Enter.",
                      24, (int)y0 + 132, 14, COL_MUTED);
             break;
         }
         case MODE_SCENARIO:
-            DrawText("Load a test scenario", 24, (int)y0, 16, COL_TEXT);
+            ui_text("Load a test scenario", 24, (int)y0, 16, COL_TEXT);
             for (int i = 0; i < MM_SCENARIO_COUNT; i++) {
                 char label[48];
                 snprintf(label, sizeof label, "%d. %s", i + 1, mm_scenario_name(i));
@@ -431,21 +541,21 @@ static void draw_left_panel(App *app)
             }
             break;
         default:
-            DrawText("The free list is printed in\nthe log and drawn on the right.",
+            ui_text("The free list is printed in\nthe log and drawn on the right.",
                      24, (int)y0, 14, COL_MUTED);
             break;
     }
 
     /* legend */
     DrawRectangle(24, SCREEN_H - 62, 14, 14, COL_FREE);
-    DrawText("Free block", 46, SCREEN_H - 62, 14, COL_MUTED);
+    ui_text("Free block", 46, SCREEN_H - 62, 14, COL_MUTED);
     DrawRectangle(24, SCREEN_H - 40, 14, 14, block_color(1));
-    DrawText("Allocated block (#id)", 46, SCREEN_H - 40, 14, COL_MUTED);
+    ui_text("Allocated block (#id)", 46, SCREEN_H - 40, 14, COL_MUTED);
 }
 
 static void draw_memory_map(App *app)
 {
-    DrawText("Memory map", MAIN_X, 14, 20, COL_TEXT);
+    ui_text_bold("Memory map", MAIN_X, 14, 20, COL_TEXT);
 
     Rectangle bar = { MAIN_X, 44, MAIN_W, 60 };
     float scale = bar.width / (float)MEM_TOTAL;
@@ -490,14 +600,14 @@ static void draw_memory_map(App *app)
         DrawRectangleLinesEx(r, 3, COL_TEXT);
     }
 
-    DrawText("0", MAIN_X, 108, 14, COL_MUTED);
+    ui_text("0", MAIN_X, 108, 14, COL_MUTED);
     const char *end_label = TextFormat("%d", MEM_TOTAL);
-    DrawText(end_label, MAIN_X + MAIN_W - MeasureText(end_label, 14), 108, 14, COL_MUTED);
+    ui_text(end_label, MAIN_X + MAIN_W - ui_measure(end_label, 14), 108, 14, COL_MUTED);
     if (hover[0]) {
-        DrawText(hover, MAIN_X + (MAIN_W - MeasureText(hover, 14)) / 2, 108, 14, COL_TEXT);
+        ui_text(hover, MAIN_X + (MAIN_W - ui_measure(hover, 14)) / 2, 108, 14, COL_TEXT);
     }
 
-    DrawText(TextFormat("Free: %d / %d units     Free blocks: %d     Largest free block: %d",
+    ui_text(TextFormat("Free: %d / %d units     Free blocks: %d     Largest free block: %d",
                         mm_total_free(&app->mm), MEM_TOTAL, mm_free_count(&app->mm),
                         mm_largest_free(&app->mm)),
              MAIN_X, 134, 16, COL_TEXT);
@@ -505,7 +615,7 @@ static void draw_memory_map(App *app)
 
 static void draw_free_list(const App *app)
 {
-    DrawText("Free list (sorted by address)", MAIN_X, 168, 18, COL_TEXT);
+    ui_text_bold("Free list (sorted by address)", MAIN_X, 168, 18, COL_TEXT);
 
     enum { COLS = 5, MAX_NODES_SHOWN = 12 };
     const float cw = 128, ch = 54, gap_x = 30, row_h = 74;
@@ -548,8 +658,8 @@ static void draw_free_list(const App *app)
         } else if (i <= shown) {
             DrawRectangleRec(r, COL_PANEL);
             DrawRectangleLinesEx(r, 2, COL_FREE);
-            DrawText(TextFormat("addr %d", node->address), (int)r.x + 10, (int)r.y + 8, 16, COL_TEXT);
-            DrawText(TextFormat("size %d", node->chunk_size), (int)r.x + 10, (int)r.y + 30, 16, COL_TEXT);
+            ui_text(TextFormat("addr %d", node->address), (int)r.x + 10, (int)r.y + 8, 16, COL_TEXT);
+            ui_text(TextFormat("size %d", node->chunk_size), (int)r.x + 10, (int)r.y + 30, 16, COL_TEXT);
             node = node->next;
         } else if (has_more && i == shown + 1) {
             DrawRectangleRec(r, COL_PANEL);
@@ -563,23 +673,23 @@ static void draw_free_list(const App *app)
     }
 
     if (n == 0) {
-        DrawText("The free list is empty: every unit of memory is allocated.",
+        ui_text("The free list is empty: every unit of memory is allocated.",
                  MAIN_X + 2 * (int)(cw + gap_x) - 4, (int)y0 + 18, 14, COL_ERR);
     }
 }
 
 static void draw_alloc_table(App *app)
 {
-    DrawText("Allocated blocks", MAIN_X, 436, 18, COL_TEXT);
+    ui_text_bold("Allocated blocks", MAIN_X, 436, 18, COL_TEXT);
 
     Rectangle tbl = { MAIN_X, 462, 400, 278 };
     DrawRectangleRec(tbl, COL_PANEL);
     DrawRectangleLinesEx(tbl, 1, COL_BORDER);
 
-    DrawText("Block",   (int)tbl.x + 34,  (int)tbl.y + 6, 15, COL_MUTED);
-    DrawText("Address", (int)tbl.x + 130, (int)tbl.y + 6, 15, COL_MUTED);
-    DrawText("Size",    (int)tbl.x + 230, (int)tbl.y + 6, 15, COL_MUTED);
-    DrawText("End",     (int)tbl.x + 320, (int)tbl.y + 6, 15, COL_MUTED);
+    ui_text("Block",   (int)tbl.x + 34,  (int)tbl.y + 6, 15, COL_MUTED);
+    ui_text("Address", (int)tbl.x + 130, (int)tbl.y + 6, 15, COL_MUTED);
+    ui_text("Size",    (int)tbl.x + 230, (int)tbl.y + 6, 15, COL_MUTED);
+    ui_text("End",     (int)tbl.x + 320, (int)tbl.y + 6, 15, COL_MUTED);
     DrawLine((int)tbl.x, (int)tbl.y + 28, (int)(tbl.x + tbl.width), (int)tbl.y + 28, COL_BORDER);
 
     const int visible = 9;
@@ -592,7 +702,7 @@ static void draw_alloc_table(App *app)
     if (app->table_scroll < 0) app->table_scroll = 0;
 
     if (n == 0) {
-        DrawText("No allocated blocks.", (int)tbl.x + 14, (int)tbl.y + 44, 16, COL_MUTED);
+        ui_text("No allocated blocks.", (int)tbl.x + 14, (int)tbl.y + 44, 16, COL_MUTED);
     }
     for (int i = 0; i < visible && app->table_scroll + i < n; i++) {
         const Allocation a = app->mm.allocs[app->table_scroll + i];   /* copy */
@@ -601,10 +711,10 @@ static void draw_alloc_table(App *app)
         if (hover) DrawRectangleRec(row, COL_HOVER);
 
         DrawRectangle((int)row.x + 10, (int)row.y + 6, 14, 14, block_color(a.id));
-        DrawText(TextFormat("#%d", a.id),        (int)row.x + 34,  (int)row.y + 5, 16, COL_TEXT);
-        DrawText(TextFormat("%d", a.address),    (int)row.x + 130, (int)row.y + 5, 16, COL_TEXT);
-        DrawText(TextFormat("%d", a.size),       (int)row.x + 230, (int)row.y + 5, 16, COL_TEXT);
-        DrawText(TextFormat("%d", a.address + a.size - 1), (int)row.x + 320, (int)row.y + 5, 16, COL_TEXT);
+        ui_text(TextFormat("#%d", a.id),        (int)row.x + 34,  (int)row.y + 5, 16, COL_TEXT);
+        ui_text(TextFormat("%d", a.address),    (int)row.x + 130, (int)row.y + 5, 16, COL_TEXT);
+        ui_text(TextFormat("%d", a.size),       (int)row.x + 230, (int)row.y + 5, 16, COL_TEXT);
+        ui_text(TextFormat("%d", a.address + a.size - 1), (int)row.x + 320, (int)row.y + 5, 16, COL_TEXT);
 
         if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             select_mode(app, MODE_DEALLOC);
@@ -613,7 +723,7 @@ static void draw_alloc_table(App *app)
         }
     }
     if (n > visible) {
-        DrawText(TextFormat("%d-%d of %d (scroll)", app->table_scroll + 1,
+        ui_text(TextFormat("%d-%d of %d (scroll)", app->table_scroll + 1,
                             app->table_scroll + visible, n),
                  (int)tbl.x + 250, 440, 14, COL_MUTED);
     }
@@ -621,7 +731,7 @@ static void draw_alloc_table(App *app)
 
 static void draw_log(void)
 {
-    DrawText("Log", 740, 436, 18, COL_TEXT);
+    ui_text_bold("Log", 740, 436, 18, COL_TEXT);
     Rectangle box = { 740, 462, 420, 278 };
     DrawRectangleRec(box, COL_PANEL);
     DrawRectangleLinesEx(box, 1, COL_BORDER);
@@ -629,7 +739,7 @@ static void draw_log(void)
     int visible = (int)(box.height - 16) / 20;
     int start = g_log_count > visible ? g_log_count - visible : 0;
     for (int i = start; i < g_log_count; i++) {
-        DrawText(g_log[i].text, (int)box.x + 12, (int)box.y + 8 + (i - start) * 20,
+        ui_text(g_log[i].text, (int)box.x + 12, (int)box.y + 8 + (i - start) * 20,
                  LOG_FONT, g_log[i].color);
     }
 }
@@ -640,8 +750,10 @@ static void draw_log(void)
 
 int main(void)
 {
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(SCREEN_W, SCREEN_H, "Memory Management System");
     SetTargetFPS(60);
+    fonts_init();
 
     App app;
     memset(&app, 0, sizeof app);
@@ -667,6 +779,7 @@ int main(void)
     }
 
     mm_destroy(&app.mm);
+    fonts_shutdown();
     CloseWindow();
     return 0;
 }

@@ -1,0 +1,17 @@
+# Build output
+build/
+cmake-build-*/
+out/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Compiled artefacts
+*.o
+*.obj
+*.a
+*.exe
+memory_manager
+test_memory
