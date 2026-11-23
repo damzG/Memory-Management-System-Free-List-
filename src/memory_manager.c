@@ -8,6 +8,9 @@
 /* Helpers                                                                  */
 /* ------------------------------------------------------------------------ */
 
+//Oyindamola Olaosun C00313475 Memory Management File
+
+// Node Structure
 static Node *create_node(int address, int size, Node *next)
 {
     Node *n = (Node *)malloc(sizeof *n);
@@ -18,6 +21,7 @@ static Node *create_node(int address, int size, Node *next)
     return n;
 }
 
+// Initialisation of the free list
 static void free_list(Node *head)
 {
     while (head != NULL) {
@@ -39,6 +43,7 @@ static void unlink_node(Node **head, Node *prev, Node *node)
 /* Core algorithms                                                          */
 /* ------------------------------------------------------------------------ */
 
+// First-Fit Allocation Method
 int first_fit(Node **head, int requested_size)
 {
     if (requested_size <= 0) return MM_FAIL;
@@ -64,6 +69,7 @@ int first_fit(Node **head, int requested_size)
     return MM_FAIL;
 }
 
+// Worst-Fit Allocation Method
 int worst_fit(Node **head, int requested_size)
 {
     if (requested_size <= 0) return MM_FAIL;
@@ -101,6 +107,8 @@ int worst_fit(Node **head, int requested_size)
     return allocated_address;
 }
 
+
+// Deallocation method
 Node *deallocate(Node *head, int freed_address, int freed_size)
 {
     Node *new_node = create_node(freed_address, freed_size, NULL);

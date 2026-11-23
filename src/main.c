@@ -4,6 +4,8 @@
  * state and turns clicks / key presses into calls on that module.
  */
 
+//Main File with UI Design Template from Raylib
+
 #include "raylib.h"
 #include "memory_manager.h"
 
